@@ -15,6 +15,11 @@ public class ToolController : MonoBehaviour
     [Range(0.1f, 10f)] public float stiffness = 1.0f;
     [Range(0f, 10f)] public float logicBackdrive = 1.5f;
     public float maxBackdriveSpeed = 1.0f;
+    [Header("Material Stiffness (Proxy-Spring)")]
+    public float materialStiffnessNormal = 1.0f; // stiffness for normal tissue
+    public float materialStiffnessTumor = 3.0f;  // stiffness for tumor tissue
+    [Range(0f, 10f)] public float proxyDamping = 0.6f; // b: device-proxy damping
+    [Range(0f, 1f)] public float deformForceGain = 0.2f; // 10~30% deformation add-on
 
     private Vector3 logicPosition;
     private Vector3 inputVelocity;
@@ -38,6 +43,8 @@ public class ToolController : MonoBehaviour
 
     private Vector3 lastPenetrationNormal = Vector3.up;
     private bool hasPenetrationNormal = false;
+    private Vector3 deformForce = Vector3.zero;
+    private float currentProxyStiffness = 1.0f; // runtime stiffness based on contact material
 
     void Start()
     {
@@ -47,6 +54,7 @@ public class ToolController : MonoBehaviour
         lastLogicPosition = logicPosition;
         inputVelocity = Vector3.zero;
         logicVelocity = Vector3.zero;
+        currentProxyStiffness = Mathf.Max(1e-5f, stiffness);
     }
 
     void Update()
@@ -56,16 +64,17 @@ public class ToolController : MonoBehaviour
         // 讓邏輯控制點也受到反作用，避免僅視覺彈開
         ApplyLogicBackdrive();
 
-        // 以實際邏輯點位移計算速度，避免只用輸入速度導致接觸估算失真
+        ResolvePenetrationProjection();
+
+        // 以投影後的邏輯點位移計算速度，確保 proxy 速度與接觸投影一致
         float dt = Mathf.Max(1e-6f, Time.deltaTime);
         logicVelocity = (logicPosition - lastLogicPosition) / dt;
         lastLogicPosition = logicPosition;
 
-        ResolvePenetrationProjection();
-
         desiredVelocity = (desiredPosition - lastDesiredPosition) / dt;
         lastDesiredPosition = desiredPosition;
 
+        UpdateProxyReactionForce();
         SendToDeformable();
         UpdateVisualProxy();
     }
@@ -92,10 +101,10 @@ public class ToolController : MonoBehaviour
     void ApplyLogicBackdrive()
     {
         return; // 先關掉，等調參數
-        if (stiffness <= 1e-5f) return;
+        if (currentProxyStiffness <= 1e-5f) return;
         if (reactionForce.sqrMagnitude <= 1e-8f) return;
 
-        Vector3 backdriveVelocity = reactionForce * (logicBackdrive / stiffness);
+        Vector3 backdriveVelocity = reactionForce * (logicBackdrive / currentProxyStiffness);
         if (maxBackdriveSpeed > 0f)
             backdriveVelocity = Vector3.ClampMagnitude(backdriveVelocity, maxBackdriveSpeed);
 
@@ -153,11 +162,34 @@ public class ToolController : MonoBehaviour
         deformable.externalVelocity = desiredVelocity;
     }
 
+    void UpdateProxyReactionForce()
+    {
+        currentProxyStiffness = GetProxyStiffness();
+        Vector3 springForce = currentProxyStiffness * (desiredPosition - logicPosition);
+        Vector3 dampingForce = proxyDamping * (desiredVelocity - logicVelocity);
+        Vector3 proxyForce = springForce + dampingForce;
+        reactionForce = proxyForce + deformForceGain * deformForce;
+    }
+
+    float GetProxyStiffness()
+    {
+        bool isTumor = false;
+        if (deformable != null)
+        {
+            isTumor = deformable.IsTumorAtWorldPoint(logicPosition);
+        }
+
+        float targetStiffness = isTumor ? materialStiffnessTumor : materialStiffnessNormal;
+        if (targetStiffness <= 1e-5f) targetStiffness = stiffness;
+        return Mathf.Max(1e-5f, targetStiffness);
+    }
+
     void UpdateVisualProxy()
     {
         if (visualMesh == null) return;
 
-        Vector3 rawOffset = reactionForce * (1.0f / stiffness);
+        float stiffnessToUse = Mathf.Max(1e-5f, currentProxyStiffness);
+        Vector3 rawOffset = reactionForce * (1.0f / stiffnessToUse);
 
         float maxDist = radius * 2.0f;
         Vector3 clampedOffset = Vector3.ClampMagnitude(rawOffset, maxDist);
@@ -165,8 +197,16 @@ public class ToolController : MonoBehaviour
         visualMesh.position = Vector3.Lerp(visualMesh.position, logicPosition + clampedOffset, 0.2f);
     }
 
+    // Receive deformation-based force from DeformableBody (small add-on only).
+    public void SetDeformForce(Vector3 force)
+    {
+        deformForce = force;
+    }
+
+    // Legacy alias: kept for compatibility but only updates deformation add-on.
+    [Obsolete("Use SetDeformForce; reactionForce is computed from proxy-spring in ToolController.")]
     public void SetReactionForce(Vector3 force)
     {
-        reactionForce = force;
+        deformForce = force;
     }
 }
