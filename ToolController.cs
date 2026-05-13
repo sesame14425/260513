@@ -66,7 +66,7 @@ public class ToolController : MonoBehaviour
 
         ResolvePenetrationProjection();
 
-        // 以實際邏輯點位移計算速度，避免只用輸入速度導致接觸估算失真
+        // 以投影後的邏輯點位移計算速度，確保 proxy 速度與接觸投影一致
         float dt = Mathf.Max(1e-6f, Time.deltaTime);
         logicVelocity = (logicPosition - lastLogicPosition) / dt;
         lastLogicPosition = logicPosition;
@@ -204,6 +204,7 @@ public class ToolController : MonoBehaviour
     }
 
     // Legacy alias: kept for compatibility but only updates deformation add-on.
+    [Obsolete("Use SetDeformForce; reactionForce is computed from proxy-spring in ToolController.")]
     public void SetReactionForce(Vector3 force)
     {
         deformForce = force;
