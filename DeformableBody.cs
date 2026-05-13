@@ -100,6 +100,7 @@ public class DeformableBody : MonoBehaviour
     int[] clusterID_array;          //constant
     ComputeBuffer ClusterID;
     float[] alpha_array;
+    Color[] mergedVertexColors; // per-vertex color cache for material lookup
     ComputeBuffer AlphaBuffer;
     int[] clusterHeadTail_array;    //constant
     int[] pointsID_array;           //constant
@@ -226,7 +227,7 @@ public class DeformableBody : MonoBehaviour
         if (pendingReactionForce.sqrMagnitude < 1e-8f) pendingReactionForce = Vector3.zero;
         if (tool != null)
         {
-            tool.SetReactionForce(reactionForceFiltered);
+            tool.SetDeformForce(reactionForceFiltered);
         }
         //The following commented code is for debuging.
         //Debuger.VectorArrayCheck(CurrentPosition);
@@ -256,6 +257,40 @@ public class DeformableBody : MonoBehaviour
             return;
         }
         ApplyExternalToolContactLegacy();
+    }
+
+    // Material lookup for proxy stiffness: finds nearest vertex color (red = tumor).
+    public bool IsTumorAtWorldPoint(Vector3 worldPoint)
+    {
+        if (!TryGetNearestVertexColor(worldPoint, out Color color)) return false;
+        return color.r > 0.5f;
+    }
+
+    // Helper for ToolController to query nearest vertex color in deformed mesh.
+    public bool TryGetNearestVertexColor(Vector3 worldPoint, out Color color)
+    {
+        color = Color.white;
+        if (CurrentPosition == null || mergedVertexColors == null || mergedVertexColors.Length == 0) return false;
+
+        Vector3 localPoint = transform.InverseTransformPoint(worldPoint);
+        float bestSqr = float.MaxValue;
+        int bestIndex = -1;
+
+        for (int i = 0; i < mergedVertices_num; i++)
+        {
+            Vector<double> p = CurrentPosition[i];
+            Vector3 vLocal = new Vector3((float)p[0], (float)p[1], (float)p[2]);
+            float sqr = (vLocal - localPoint).sqrMagnitude;
+            if (sqr < bestSqr)
+            {
+                bestSqr = sqr;
+                bestIndex = i;
+            }
+        }
+
+        if (bestIndex < 0 || bestIndex >= mergedVertexColors.Length) return false;
+        color = mergedVertexColors[bestIndex];
+        return true;
     }
 
     void ApplyExternalToolContactLegacy()
@@ -507,6 +542,7 @@ public class DeformableBody : MonoBehaviour
         mass = new double[mergedVertices_num];
         alpha_array = new float[mergedVertices_num];
         Color[] vColors = mesh.colors;
+        mergedVertexColors = new Color[mergedVertices_num];
 
         float baseMass = (Mass <= 0) ? 1.0f : (Mass / mergedVertices_num);
 
@@ -516,6 +552,7 @@ public class DeformableBody : MonoBehaviour
 
             Color c = (vColors != null && vColors.Length > originalIdx && originalIdx >= 0)
                       ? vColors[originalIdx] : Color.white;
+            mergedVertexColors[i] = c;
 
             if (c.r > 0.5f) // 紅色區域 (腫瘤)
             {
