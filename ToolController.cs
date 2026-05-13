@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class ToolController : MonoBehaviour
 {
@@ -17,9 +17,13 @@ public class ToolController : MonoBehaviour
     public float maxBackdriveSpeed = 1.0f;
     [Header("Material Stiffness (Proxy-Spring)")]
     public float materialStiffnessNormal = 1.0f; // stiffness for normal tissue
-    public float materialStiffnessTumor = 3.0f;  // stiffness for tumor tissue
+    public float materialStiffnessTumor = 3.0f;  // stiffness for tumor tissue (3x)
     [Range(0f, 10f)] public float proxyDamping = 0.6f; // b: device-proxy damping
     [Range(0f, 1f)] public float deformForceGain = 0.2f; // 10~30% deformation add-on
+
+    [Header("Hybrid Control")]
+    public float virtualMass = 1.0f;
+    public float maxLogicSpeed = 2.0f;
 
     private Vector3 logicPosition;
     private Vector3 inputVelocity;
@@ -61,18 +65,21 @@ public class ToolController : MonoBehaviour
     {
         HandleInput();
 
+        float dt = Mathf.Max(1e-6f, Time.deltaTime);
+
+        desiredVelocity = (desiredPosition - lastDesiredPosition) / dt;
+        lastDesiredPosition = desiredPosition;
+
+        ApplyHybridMotion(dt);
+
         // 讓邏輯控制點也受到反作用，避免僅視覺彈開
         ApplyLogicBackdrive();
 
         ResolvePenetrationProjection();
 
         // 以投影後的邏輯點位移計算速度，確保 proxy 速度與接觸投影一致
-        float dt = Mathf.Max(1e-6f, Time.deltaTime);
         logicVelocity = (logicPosition - lastLogicPosition) / dt;
         lastLogicPosition = logicPosition;
-
-        desiredVelocity = (desiredPosition - lastDesiredPosition) / dt;
-        lastDesiredPosition = desiredPosition;
 
         UpdateProxyReactionForce();
         SendToDeformable();
@@ -90,11 +97,24 @@ public class ToolController : MonoBehaviour
         Vector3 inputDir = new Vector3(h, up, v);
         inputVelocity = inputDir * moveSpeed;
 
-        desiredPosition += inputVelocity * Time.deltaTime;
-
+        Vector3 targetDesired = desiredPosition + inputVelocity * Time.deltaTime;
         float t = 1f - Mathf.Exp(-desiredSmoothing * Time.deltaTime);
-        logicPosition = Vector3.Lerp(logicPosition, desiredPosition, t);
+        desiredPosition = Vector3.Lerp(desiredPosition, targetDesired, t);
+    }
 
+    void ApplyHybridMotion(float dt)
+    {
+        currentProxyStiffness = GetProxyStiffness();
+
+        Vector3 springForce = currentProxyStiffness * (desiredPosition - logicPosition);
+        Vector3 dampingForce = proxyDamping * (desiredVelocity - logicVelocity);
+        Vector3 accel = (springForce + dampingForce) / Mathf.Max(1e-5f, virtualMass);
+
+        logicVelocity += accel * dt;
+        if (maxLogicSpeed > 0f)
+            logicVelocity = Vector3.ClampMagnitude(logicVelocity, maxLogicSpeed);
+
+        logicPosition += logicVelocity * dt;
         transform.position = logicPosition;
     }
 
@@ -155,11 +175,9 @@ public class ToolController : MonoBehaviour
     {
         if (deformable == null) return;
 
-        deformable.externalPos = desiredPosition;
-
+        deformable.externalPos = logicPosition;
         deformable.externalRadius = radius;
-
-        deformable.externalVelocity = desiredVelocity;
+        deformable.externalVelocity = logicVelocity;
     }
 
     void UpdateProxyReactionForce()
