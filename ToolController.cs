@@ -176,9 +176,11 @@ public class ToolController : MonoBehaviour
     {
         if (deformable == null) return;
 
-        deformable.externalPos = logicPosition;
+        // Use desired (device) position/velocity so haptic force updates even when
+        // the proxy is projected out of penetration.
+        deformable.externalPos = desiredPosition;
         deformable.externalRadius = radius;
-        deformable.externalVelocity = logicVelocity;
+        deformable.externalVelocity = desiredVelocity;
     }
 
     void UpdateProxyReactionForce()
