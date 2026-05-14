@@ -544,6 +544,9 @@ public class DeformableBody : MonoBehaviour
         Color[] vColors = mesh.colors;
         mergedVertexColors = new Color[mergedVertices_num];
 
+        int tumorCount = 0;
+        int normalCount = 0;
+
         float baseMass = (Mass <= 0) ? 1.0f : (Mass / mergedVertices_num);
 
         for (int i = 0; i < mergedVertices_num; i++)
@@ -558,15 +561,19 @@ public class DeformableBody : MonoBehaviour
             {
                 mass[i] = baseMass * 2.0f;
                 alpha_array[i] = AlphaTumor;
+                tumorCount++;
             }
             else // 一般區域
             {
                 mass[i] = baseMass;
                 alpha_array[i] = AlphaNormal;
+                normalCount++;
             }
 
             if (double.IsNaN(mass[i]) || mass[i] <= 0) mass[i] = 1.0;
         }
+
+        Debug.Log($"[VertexCount] tumor={tumorCount}, normal={normalCount}");
 
         _Apq = CreateMatrix.Dense<double>(3,dim,0);
         _Aqq = Operation.Aqq_Init(OriginalPosition, mass, originalCenterPos, clusterHeadTail_array, pointsID_array, cluster_num, dim);
